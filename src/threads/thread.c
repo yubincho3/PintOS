@@ -21,8 +21,12 @@
 #define THREAD_MAGIC 0xcd6abf4b
 
 /* List of processes in THREAD_READY state, that is, processes
-   that are ready to run but not actually running. */
+   that are ready to run but not actually running. */ 
 static struct list ready_list;
+
+/* List of processes in THREAD_BLOCKED state, that is, processes
+    that are ready to run but not actually running. */
+static struct list sleep_list;
 
 /* List of all processes.  Processes are added to this list
    when they are first scheduled and removed when they exit. */
@@ -91,6 +95,7 @@ thread_init (void)
 
   lock_init (&tid_lock);
   list_init (&ready_list);
+  list_init (&sleep_list);
   list_init (&all_list);
 
   /* Set up a thread structure for the running thread. */
@@ -313,12 +318,53 @@ thread_yield (void)
   enum intr_level old_level;
   
   ASSERT (!intr_context ());
-
   old_level = intr_disable ();
+  
   if (cur != idle_thread) 
     list_push_back (&ready_list, &cur->elem);
   cur->status = THREAD_READY;
   schedule ();
+  intr_set_level (old_level);
+}
+
+void thread_awake (int64_t global_ticks)
+{
+  struct list_elem *e = list_begin (&sleep_list);
+
+  while (e != list_end (&sleep_list))
+  {
+    struct thread *t = list_entry (e, struct thread, elem);
+
+    if (t->ticks_till_wake_up > global_ticks)
+    {
+      e = list_next (e);
+      continue;
+    }
+
+    e = list_remove (e);
+    thread_unblock (t);
+  }
+}
+
+/* If the current thread is not idle thread,
+   change the state of the caller thread to BLOCKED,
+   store the local tick to wake up,
+   update the global tick if necessary,
+   and call schedule() */
+void
+thread_sleep (int64_t ticks_till_wake_up)
+{
+  struct thread *cur = thread_current ();
+  enum intr_level old_level;
+
+  ASSERT (!intr_context ());
+  old_level = intr_disable ();
+
+  cur->ticks_till_wake_up = ticks_till_wake_up;
+  if (cur != idle_thread)
+    list_push_back (&sleep_list, &cur->elem);
+  thread_block ();
+
   intr_set_level (old_level);
 }
 
@@ -383,7 +429,7 @@ thread_get_recent_cpu (void)
   /* Not yet implemented. */
   return 0;
 }
-
+
 /* Idle thread.  Executes when no other thread is ready to run.
 
    The idle thread is initially put on the ready list by
@@ -432,7 +478,7 @@ kernel_thread (thread_func *function, void *aux)
   function (aux);       /* Execute the thread function. */
   thread_exit ();       /* If function() returns, kill the thread. */
 }
-
+
 /* Returns the running thread. */
 struct thread *
 running_thread (void) 
@@ -581,7 +627,7 @@ allocate_tid (void)
 
   return tid;
 }
-
+
 /* Offset of `stack' member within `struct thread'.
    Used by switch.S, which can't figure it out on its own. */
 uint32_t thread_stack_ofs = offsetof (struct thread, stack);
