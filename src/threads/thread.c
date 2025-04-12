@@ -24,6 +24,10 @@
    that are ready to run but not actually running. */
 static struct list ready_list;
 
+/* List of processes in THREAD_BLOCKED state, that is, processes
+   that are ready to run but not actually running. */
+static struct list sleep_list;
+
 /* List of all processes.  Processes are added to this list
    when they are first scheduled and removed when they exit. */
 static struct list all_list;
@@ -70,6 +74,7 @@ static void *alloc_frame (struct thread *, size_t size);
 static void schedule (void);
 void thread_schedule_tail (struct thread *prev);
 static tid_t allocate_tid (void);
+static bool cmp_thread_ticks_till_wakup (struct list_elem *a, struct list_elem *b, void *aux UNUSED);
 
 /* Initializes the threading system by transforming the code
    that's currently running into a thread.  This can't work in
@@ -91,6 +96,7 @@ thread_init (void)
 
   lock_init (&tid_lock);
   list_init (&ready_list);
+  list_init (&sleep_list);
   list_init (&all_list);
 
   /* Set up a thread structure for the running thread. */
@@ -322,6 +328,41 @@ thread_yield (void)
   intr_set_level (old_level);
 }
 
+void
+thread_sleep (int64_t ticks_till_wakup)
+{
+  struct thread *cur = thread_current ();
+
+  enum intr_level old_level;
+  ASSERT (!intr_context ());
+  old_level = intr_disable ();
+
+  cur->ticks_till_wakeup = ticks_till_wakup;
+  if (cur != idle_thread)
+    list_insert_ordered (&sleep_list, &cur->elem, cmp_thread_ticks_till_wakup, NULL);
+  thread_block ();
+
+  intr_set_level (old_level);
+}
+
+void
+thread_wakeup (int64_t global_ticks)
+{
+  ASSERT (intr_get_level () == INTR_OFF);
+
+  struct list_elem *e = list_begin (&sleep_list);
+  while (e != list_end (&sleep_list))
+  {
+    struct thread *t = list_entry (e, struct thread, elem);
+
+    if (t->ticks_till_wakeup > global_ticks)
+      break;
+
+    e = list_remove (e);
+    thread_unblock (t);
+  }
+}
+
 /* Invoke function 'func' on all threads, passing along 'aux'.
    This function must be called with interrupts off. */
 void
@@ -383,7 +424,7 @@ thread_get_recent_cpu (void)
   /* Not yet implemented. */
   return 0;
 }
-
+
 /* Idle thread.  Executes when no other thread is ready to run.
 
    The idle thread is initially put on the ready list by
@@ -581,7 +622,15 @@ allocate_tid (void)
 
   return tid;
 }
-
+
+static bool
+cmp_thread_ticks_till_wakup (struct list_elem *a, struct list_elem *b, void *aux UNUSED)
+{
+  struct thread *ta = list_entry (a, struct thread, elem);
+  struct thread *tb = list_entry (b, struct thread, elem);
+  return ta->ticks_till_wakeup < tb->ticks_till_wakeup;
+}
+
 /* Offset of `stack' member within `struct thread'.
    Used by switch.S, which can't figure it out on its own. */
 uint32_t thread_stack_ofs = offsetof (struct thread, stack);
