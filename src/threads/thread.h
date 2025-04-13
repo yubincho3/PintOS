@@ -5,6 +5,8 @@
 #include <list.h>
 #include <stdint.h>
 
+#include "threads/fixed.h"
+
 /* States in a thread's life cycle. */
 enum thread_status
   {
@@ -23,6 +25,17 @@ typedef int tid_t;
 #define PRI_MIN 0                       /* Lowest priority. */
 #define PRI_DEFAULT 31                  /* Default priority. */
 #define PRI_MAX 63                      /* Highest priority. */
+
+/* Thread nices. */
+#define NICE_MIN -20                    /* Highest nice. */
+#define NICE_DEFAULT 0                  /* Default nice. */
+#define NICE_MAX 20                     /* Lowest nice. */
+
+/* Thread recent cpu. */
+#define RECENT_CPU_DEFAULT 0            /* Default recent_cpu. */
+
+/* Load average. */
+#define LOAD_AVG_DEFAULT 0              /* Default load_avg. */
 
 /* A kernel thread or user process.
 
@@ -91,6 +104,8 @@ struct thread
     struct list_elem allelem;           /* List element for all threads list. */
 
     int64_t ticks_till_wakeup;
+    int nice;
+    fixed recent_cpu;
 
     /* Shared between thread.c and synch.c. */
     struct list_elem elem;              /* List element. */
@@ -131,6 +146,8 @@ void thread_yield (void);
 void thread_sleep (int64_t ticks_till_wakup);
 void thread_wakeup (int64_t global_ticks);
 
+bool thread_need_preempt (void);
+
 /* Performs some operation on thread t, given auxiliary data AUX. */
 typedef void thread_action_func (struct thread *t, void *aux);
 void thread_foreach (thread_action_func *, void *);
@@ -142,5 +159,13 @@ int thread_get_nice (void);
 void thread_set_nice (int);
 int thread_get_recent_cpu (void);
 int thread_get_load_avg (void);
+
+/* MLFQs */
+void mlfqs_calc_prior (struct thread *t, void *aux UNUSED);
+void mlfqs_calc_recent_cpu (struct thread *t, void *aux UNUSED);
+void mlfqs_calc_load_avg (void);
+void mlfqs_inc_recent_cpu (void);
+void mlfqs_recalc_recent_cpu (void);
+void mlfqs_recalc_prior (void);
 
 #endif /* threads/thread.h */

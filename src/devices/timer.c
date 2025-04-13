@@ -173,6 +173,20 @@ timer_interrupt (struct intr_frame *args UNUSED)
   ticks++;
   thread_tick ();
 
+  if (thread_mlfqs)
+  {
+    mlfqs_inc_recent_cpu ();
+
+    if (ticks % 4 == 0)
+      mlfqs_recalc_prior ();
+
+    if (ticks % TIMER_FREQ == 0)
+    {
+      mlfqs_calc_load_avg ();
+      mlfqs_recalc_recent_cpu ();
+    }
+  }
+
   thread_wakeup (ticks);
 }
 
