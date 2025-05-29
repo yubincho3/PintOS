@@ -18,8 +18,11 @@
 #include "threads/thread.h"
 #include "threads/vaddr.h"
 
+#define WORD_SIZE sizeof (void*)
+
 static thread_func start_process NO_RETURN;
 static bool load (const char *cmdline, void (**eip) (void), void **esp);
+static void argument_stack (char* argv[], int argc, void** esp_);
 
 /* Starts a new thread running a user program loaded from
    FILENAME.  The new thread may be scheduled (and may even exit)
@@ -38,6 +41,12 @@ process_execute (const char *file_name)
     return TID_ERROR;
   strlcpy (fn_copy, file_name, PGSIZE);
 
+  /* Process command line and get prgram name */
+  char *save_ptr;
+  file_name = strtok_r (file_name, " ", &save_ptr);
+  if (file_name == NULL)
+    return TID_ERROR;
+
   /* Create a new thread to execute FILE_NAME. */
   tid = thread_create (file_name, PRI_DEFAULT, start_process, fn_copy);
   if (tid == TID_ERROR)
@@ -54,6 +63,18 @@ start_process (void *file_name_)
   struct intr_frame if_;
   bool success;
 
+  /* Parse the command line */
+  char *argv[64];
+  int argc = 0;
+
+  char *save_ptr;
+  char *token = strtok_r (file_name, " ", &save_ptr);
+  while (token != NULL)
+  {
+    argv[argc++] = token;
+    token = strtok_r (NULL, " ", &save_ptr);
+  }
+
   /* Initialize interrupt frame and load executable. */
   memset (&if_, 0, sizeof if_);
   if_.gs = if_.fs = if_.es = if_.ds = if_.ss = SEL_UDSEG;
@@ -61,10 +82,20 @@ start_process (void *file_name_)
   if_.eflags = FLAG_IF | FLAG_MBS;
   success = load (file_name, &if_.eip, &if_.esp);
 
+  /* Set up stack */
+  argument_stack (argv, argc, &if_.esp);
+  hex_dump (if_.esp, if_.esp, PHYS_BASE - if_.esp, true);
+
   /* If load failed, quit. */
   palloc_free_page (file_name);
   if (!success) 
     thread_exit ();
+
+  // We need to call `argument_stack` before `palloc_free_page(file_name)`
+  // NOT HERE!
+  /* Set up stack */
+  // argument_stack (argv, argc, &if_.esp);
+  // hex_dump (if_.esp, if_.esp, PHYS_BASE - if_.esp, true);
 
   /* Start the user process by simulating a return from an
      interrupt, implemented by intr_exit (in
@@ -131,7 +162,7 @@ process_activate (void)
      interrupts. */
   tss_update ();
 }
-
+
 /* We load ELF binaries.  The following definitions are taken
    from the ELF specification, [ELF1], more-or-less verbatim.  */
 
@@ -315,7 +346,7 @@ load (const char *file_name, void (**eip) (void), void **esp)
   file_close (file);
   return success;
 }
-
+
 /* load() helpers. */
 
 static bool install_page (void *upage, void *kpage, bool writable);
@@ -462,4 +493,63 @@ install_page (void *upage, void *kpage, bool writable)
      address, then map our page there. */
   return (pagedir_get_page (t->pagedir, upage) == NULL
           && pagedir_set_page (t->pagedir, upage, kpage, writable));
+}
+
+static void
+argument_stack (char* argv[], int argc, void** esp_)
+{
+  uint8_t* esp = *esp_;
+  int i;
+
+  for (i = argc - 1; i >= 0; i--)
+  {
+    // argument length including '\0'
+    const size_t len = strlen (argv[i]) + 1;
+
+    // push argument string including '\0'
+    esp -= len;
+    memcpy (esp, argv[i], len);
+
+    // change argv[i] to a pointer to the newly pushed argument's address
+    argv[i] = (char*)esp;
+  }
+
+  // pad with WORD_SIZE
+  switch ((uintptr_t)esp % WORD_SIZE)
+  {
+    case 7: *--esp = 0;
+    case 6: *--esp = 0;
+    case 5: *--esp = 0;
+    case 4: *--esp = 0;
+    case 3: *--esp = 0;
+    case 2: *--esp = 0;
+    case 1: *--esp = 0;
+    case 0: break;
+  }
+
+  // push NULL(last argument pointer is NULL)
+  esp -= WORD_SIZE;
+  *(char**)esp = NULL;
+
+  // push argument pointers
+  for (i = argc - 1; i >= 0; i--)
+  {
+    esp -= WORD_SIZE;
+    *(char**)esp = argv[i];
+  }
+
+  // push argv pointer
+  argv = esp;
+  esp -= WORD_SIZE;
+  *(char***)esp = argv;
+
+  // push argc
+  esp -= sizeof (int);
+  *(int*)esp = argc;
+
+  // push fake return address
+  esp -= sizeof (void(*)());
+  *(void(**)())esp = NULL;
+
+  *esp_ = esp;
 }
