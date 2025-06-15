@@ -6,6 +6,8 @@
 #include <stdint.h>
 
 #include "threads/fixed.h"
+#include "threads/synch.h"
+#include "filesys/file.h"
 
 /* States in a thread's life cycle. */
 enum thread_status
@@ -112,7 +114,16 @@ struct thread
 
 #ifdef USERPROG
     /* Owned by userprog/process.c. */
+    struct file *fd_table[128];
+    int next_fd;
     uint32_t *pagedir;                  /* Page directory. */
+    int exit_status;                    /* Exit status of process. */
+    bool load_success;                  /* Success status of load. */
+    struct semaphore sema_load;         /* Semaphore for exec synch. */
+    struct semaphore sema_wait;         /* Semaphore for wait synch. */
+    struct thread *parent;              /* Parent of child thread. */
+    struct list child_list;             /* List of child threads. */
+    struct list_elem childelem;         /* List elemment for child threads list. */ 
 #endif
 
     /* Owned by thread.c. */
@@ -136,6 +147,12 @@ tid_t thread_create (const char *name, int priority, thread_func *, void *);
 void thread_block (void);
 void thread_unblock (struct thread *);
 
+struct thread *thread_find (tid_t tid);
+#ifdef USERPROG
+struct thread *thread_find_child (tid_t tid);
+void thread_add_child (struct thread *child);
+void thread_remove_child (struct thread *child);
+#endif
 struct thread *thread_current (void);
 tid_t thread_tid (void);
 const char *thread_name (void);

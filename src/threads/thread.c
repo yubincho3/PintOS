@@ -278,6 +278,76 @@ thread_name (void)
   return thread_current ()->name;
 }
 
+struct thread *
+thread_find (tid_t tid)
+{
+  enum intr_level old_level = intr_disable ();
+
+  struct thread *found = NULL;
+
+  struct list_elem *e;
+  for (e = list_begin (&all_list); e != list_end (&all_list); e = list_next (e))
+  {
+    struct thread *t = list_entry (e, struct thread, allelem);
+    if (t->tid == tid)
+    {
+      found = t;
+      break;
+    }
+  }
+
+  intr_set_level (old_level);
+  return found;
+}
+
+#ifdef USERPROG
+struct thread *
+thread_find_child (tid_t tid)
+{
+  enum intr_level old_level = intr_disable ();
+
+  struct thread *cur = thread_current ();
+  struct thread *found = NULL;
+
+  struct list_elem *e;
+  for (e = list_begin (&cur->child_list); e != list_end (&cur->child_list); e = list_next (e))
+  {
+    struct thread *t = list_entry (e, struct thread, childelem);
+    if (t->tid == tid)
+    {
+      found = t;
+      break;
+    }
+  }
+
+  intr_set_level (old_level);
+  return found;
+}
+
+void
+thread_add_child (struct thread *child)
+{
+  enum intr_level old_level = intr_disable ();
+
+  struct thread *cur = thread_current ();
+  child->parent = cur;
+  list_push_back (&cur->child_list, &child->childelem);
+
+  intr_set_level (old_level);
+}
+
+void
+thread_remove_child (struct thread *child)
+{
+  enum intr_level old_level = intr_disable ();
+
+  child->parent = NULL;
+  list_remove (&child->childelem);
+
+  intr_set_level (old_level);
+}
+#endif
+
 /* Returns the running thread.
    This is running_thread() plus a couple of sanity checks.
    See the big comment at the top of thread.h for details. */
@@ -285,7 +355,7 @@ struct thread *
 thread_current (void) 
 {
   struct thread *t = running_thread ();
-  
+
   /* Make sure T is really a thread.
      If either of these assertions fire, then your thread may
      have overflowed its stack.  Each thread has less than 4 kB
@@ -590,6 +660,14 @@ init_thread (struct thread *t, const char *name, int priority)
   t->recent_cpu = RECENT_CPU_DEFAULT;
   t->magic = THREAD_MAGIC;
   list_push_back (&all_list, &t->allelem);
+
+#ifdef USERPROG
+  t->next_fd = 2;
+  t->parent = NULL;
+  list_init (&t->child_list);
+  sema_init (&t->sema_load, 0);
+  sema_init (&t->sema_wait, 0);
+#endif
 }
 
 /* Allocates a SIZE-byte frame at the top of thread T's stack and
